@@ -45,9 +45,9 @@ class GameSessionConsumer(AsyncWebsocketConsumer):
         
         await self.accept()
 
-        players = await sync_to_async(list)(game.players.all())
+        self.players = await sync_to_async(list)(game.players.all())
 
-        for player in players:
+        for player in self.players:
             await self.channel_layer.group_send(
                 self.game_channel,
                 {

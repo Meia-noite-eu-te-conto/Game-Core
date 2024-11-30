@@ -16,9 +16,19 @@ class GameConfig:
     player_height = 100
     player_width = 25
 
+    multiplayer_height = 25
+    multiplayer_width = 100
+
     player_positions = [
         {"x": 25, "y": 225},
         {"x": 800, "y": 225},
+    ]
+
+    multiplayer_positions = [
+        {"x": 25, "y": 225},
+        {"x": 500, "y": 225},
+        {"x": 225, "y": 25},
+        {"x": 225, "y": 500},
     ]
 
 class GameStatus:
