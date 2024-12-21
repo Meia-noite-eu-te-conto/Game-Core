@@ -302,7 +302,7 @@ class GameSession:
                     "type": "game-over",
                     "matchId": game_session.matchId,
                     "gameId": game_session.id,
-					"winner":  top_players[0].id if len(top_players) == 1 else None,
+					"winner":  top_players[0].id if top_players else None,
 					"players": players_ranking
                 })
             )
@@ -311,6 +311,8 @@ class GameSession:
 				{
 					"type": "game_finished",
 					"roomType": self.roomType,
+					"players": players_ranking,
+					"winner": top_players[0].id if top_players else None,
 					"expiry": 0.02
 				})
 		except Exception as e:
