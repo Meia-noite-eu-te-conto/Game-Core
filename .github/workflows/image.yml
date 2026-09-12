@@ -1,0 +1,90 @@
+name: image
+
+# Constrói a imagem, roda um smoke test e só então publica.
+# Ordem importa: imagem que não passa `manage.py check` não chega ao registry.
+#
+# Requer o secret GHCR_TOKEN — PAT clássico com escopo write:packages, definido como
+# secret da ORGANIZAÇÃO (Settings → Secrets and variables → Actions) para os três
+# repositórios compartilharem um só.
+#
+# Por que não o GITHUB_TOKEN automático: ele só publica pacotes do dono do
+# repositório, ou seja em ghcr.io/meia-noite-eu-te-conto/*. As imagens vão para
+# ghcr.io/davypaulino/*, que é o namespace que o cluster já usa e para o qual o pull
+# secret `github-registry` já funciona.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/davypaulino/pong-game-core
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # {{raw}} preserva o "v" do tag git (v0.1.0), que é a forma usada nos
+          # manifests e pelo routine-api. {{version}} sozinho geraria 0.1.0 e a
+          # imagem não seria encontrada.
+          # Sem `latest`: com imagePullPolicy IfNotPresent, uma tag móvel faz o nó
+          # rodar imagem em cache sem avisar.
+          tags: |
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
+            type=sha,format=short,prefix=
+            type=raw,value=main,enable={{is_default_branch}}
+
+      # Constrói para o daemon local, sem publicar, para poder testar.
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: smoke test
+        run: |
+          set -euo pipefail
+          # roda como non-root?
+          uid=$(docker run --rm ${{ env.IMAGE }}:ci id -u)
+          test "$uid" = "10001" || { echo "esperado uid 10001, obtido $uid"; exit 1; }
+          # configuração do Django é válida? (não precisa de banco)
+          docker run --rm ${{ env.IMAGE }}:ci python manage.py check
+          # as dependências nativas carregam?
+          docker run --rm ${{ env.IMAGE }}:ci python -c "import django, psycopg2, channels, uvicorn"
+
+      - name: login no ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: davypaulino
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # Publica reaproveitando o cache do build acima — rápido.
+      - name: push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
