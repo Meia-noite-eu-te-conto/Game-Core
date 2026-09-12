@@ -125,11 +125,13 @@ No WS: cliente manda `{"direction":"w"|"s"|"a"|"d"}`; servidor manda
   pod, mas cada desconexão abrupta de jogador de verdade produz esse stack trace no log.
   Confirmado subindo o serviço no cluster (TK.12) e fechando a conexão logo após o
   handshake.
-- **Sem teste de unidade.** Desde 2026-09-12 existe um teste de carga k6
-  (`k6/smoke.js`) rodando no CI e bloqueando publicação, mas ele cobre só os
-  endpoints REST de leitura. A física e o worker de simulação continuam sem
-  teste algum — o que vai mudar com os golden files da migração para Go
-  (ADR-0004, skill `port-game-loop`).
+- **Zero testes neste repositório.** O CI daqui só constrói a imagem e roda um
+  smoke test (uid non-root, `manage.py check`, imports nativos). O teste de
+  integração com k6 vive no repositório **Transcendence**, que puxa as imagens
+  publicadas e exercita o fluxo atravessando os serviços — que é onde os bugs de
+  contrato moram. A física e o worker de simulação continuam sem teste algum, e
+  só ganham um com os golden files da migração para Go (ADR-0004, skill
+  `port-game-loop`).
 
 Detalhe de cada item em [docs/migration/01-analise-atual.md](../docs/migration/01-analise-atual.md).
 
