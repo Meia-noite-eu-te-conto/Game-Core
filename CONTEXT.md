@@ -118,6 +118,13 @@ No WS: cliente manda `{"direction":"w"|"s"|"a"|"d"}`; servidor manda
 - **`redis.Redis(host='redis')` fixo** no consumer e em `games/views.py`, ignorando
   `REDIS_HOST` que o resto do código lê do ambiente.
 - **`task = lista.append(...)`** em `add_player_channels` guarda `None`.
+- **`send()` sem tratar socket já fechado.** `update_score` e `game_update` chamam
+  `self.channel_layer.group_send` sem capturar erro de envio; se um jogador cai no
+  meio de um broadcast (aba fechada, rede caindo), o Channels loga um
+  `RuntimeError: Unexpected ASGI message 'websocket.send' after ...` — não derruba o
+  pod, mas cada desconexão abrupta de jogador de verdade produz esse stack trace no log.
+  Confirmado subindo o serviço no cluster (TK.12) e fechando a conexão logo após o
+  handshake.
 - **Zero testes.**
 
 Detalhe de cada item em [docs/migration/01-analise-atual.md](../docs/migration/01-analise-atual.md).
