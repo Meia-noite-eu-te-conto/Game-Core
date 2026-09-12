@@ -1,7 +1,8 @@
 name: image
 
-# Constrói a imagem, roda um smoke test e só então publica.
-# Ordem importa: imagem que não passa `manage.py check` não chega ao registry.
+# Constrói a imagem, roda um smoke test e um teste de carga com k6, e só então
+# publica. Ordem importa: imagem que não passa `manage.py check` ou que não
+# aguenta a carga do k6 não chega ao registry.
 #
 # Requer o secret GHCR_TOKEN — PAT clássico com escopo write:packages, definido como
 # secret da ORGANIZAÇÃO (Settings → Secrets and variables → Actions) para os três
@@ -28,6 +29,29 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Postgres e Redis reais para o teste de carga do k6 rodar contra o
+    # comportamento de verdade do serviço — não uma versão dublada.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gamecore
+          POSTGRES_PASSWORD: gamecore
+          POSTGRES_DB: gamecore
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +93,72 @@ jobs:
           docker run --rm ${{ env.IMAGE }}:ci python manage.py check
           # as dependências nativas carregam?
           docker run --rm ${{ env.IMAGE }}:ci python -c "import django, psycopg2, channels, uvicorn"
+
+      # Migra, semeia um pouco de dado (ranking/histórico vazios não
+      # exercitam a query de verdade) e sobe o serviço para o k6 rodar
+      # contra algo real, com Postgres e Redis do services: do job.
+      - name: migrations para o teste de carga
+        env:
+          APP_ENV: |
+            DB_NAME=gamecore
+            DB_USER=gamecore
+            DB_PASSWORD=gamecore
+            DB_HOST=localhost
+            DB_PORT=5432
+            REDIS_HOST=localhost
+            REDIS_PORT=6379
+        run: |
+          echo "$APP_ENV" > /tmp/app.env
+          docker run --rm --network host --env-file /tmp/app.env \
+            ${{ env.IMAGE }}:ci python manage.py migrate --noinput
+
+      - name: semeia dados para o teste de carga
+        run: |
+          cat > /tmp/seed.py <<'PYEOF'
+          import os, django
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "game_project.settings")
+          django.setup()
+          from games_app.models import GameModel, PlayerModel, ScoreModel
+          for i in range(5):
+              g = GameModel.objects.create(status=1, created_by="ci", roomId=f"room-{i}", matchId=f"match-{i}", stage=1)
+              for j, name in enumerate([f"a-{i}", f"b-{i}"]):
+                  p = PlayerModel.objects.create(id=f"ci-{i}-{j}", name=name, gameId=g, color=str(j))
+                  ScoreModel.objects.create(gameId=g, playerId=p, score=5 if j == 0 else 3, position=j + 1)
+          print("seed ok")
+          PYEOF
+          docker run --rm --network host --env-file /tmp/app.env \
+            -v /tmp/seed.py:/app/seed.py:ro \
+            ${{ env.IMAGE }}:ci python manage.py shell -c "exec(open('/app/seed.py').read())"
+
+      - name: sobe o serviço para o teste de carga
+        run: |
+          docker run -d --name app-under-test --network host --env-file /tmp/app.env \
+            ${{ env.IMAGE }}:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8001/api/v1/game-core/games/ranking/ >/dev/null && exit 0
+            sleep 1
+          done
+          echo "serviço não respondeu a tempo"
+          docker logs app-under-test
+          exit 1
+
+      # docker run direto com a imagem oficial, não a Action grafana/k6-action:
+      # ela foi ARQUIVADA (movida para grafana-cold-storage/k6-action) e não
+      # recebe mais atualização.
+      - name: k6 — teste de carga (k6/smoke.js)
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/k6:/scripts:ro" \
+            -e BASE_URL=http://localhost:8001 \
+            docker.io/grafana/k6:2.2.0 run /scripts/smoke.js
+
+      - name: logs do serviço sob teste (só se algo falhou)
+        if: failure()
+        run: docker logs app-under-test
+
+      - name: encerra o serviço de teste
+        if: always()
+        run: docker rm -f app-under-test || true
 
       - name: login no ghcr.io
         if: github.event_name != 'pull_request'
