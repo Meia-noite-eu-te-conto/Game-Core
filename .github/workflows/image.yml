@@ -3,6 +3,10 @@ name: image
 # Constrói a imagem, roda um smoke test e só então publica.
 # Ordem importa: imagem que não passa `manage.py check` não chega ao registry.
 #
+# O teste de carga/integração com k6 NÃO fica aqui: ele vive no repositório
+# Transcendence, que aponta para os submodules, puxa as imagens publicadas e
+# exercita o fluxo atravessando os serviços. Ver Transcendence/k6/.
+#
 # Requer o secret GHCR_TOKEN — PAT clássico com escopo write:packages, definido como
 # secret da ORGANIZAÇÃO (Settings → Secrets and variables → Actions) para os três
 # repositórios compartilharem um só.

@@ -118,7 +118,20 @@ No WS: cliente manda `{"direction":"w"|"s"|"a"|"d"}`; servidor manda
 - **`redis.Redis(host='redis')` fixo** no consumer e em `games/views.py`, ignorando
   `REDIS_HOST` que o resto do código lê do ambiente.
 - **`task = lista.append(...)`** em `add_player_channels` guarda `None`.
-- **Zero testes.**
+- **`send()` sem tratar socket já fechado.** `update_score` e `game_update` chamam
+  `self.channel_layer.group_send` sem capturar erro de envio; se um jogador cai no
+  meio de um broadcast (aba fechada, rede caindo), o Channels loga um
+  `RuntimeError: Unexpected ASGI message 'websocket.send' after ...` — não derruba o
+  pod, mas cada desconexão abrupta de jogador de verdade produz esse stack trace no log.
+  Confirmado subindo o serviço no cluster (TK.12) e fechando a conexão logo após o
+  handshake.
+- **Zero testes neste repositório.** O CI daqui só constrói a imagem e roda um
+  smoke test (uid non-root, `manage.py check`, imports nativos). O teste de
+  integração com k6 vive no repositório **Transcendence**, que puxa as imagens
+  publicadas e exercita o fluxo atravessando os serviços — que é onde os bugs de
+  contrato moram. A física e o worker de simulação continuam sem teste algum, e
+  só ganham um com os golden files da migração para Go (ADR-0004, skill
+  `port-game-loop`).
 
 Detalhe de cada item em [docs/migration/01-analise-atual.md](../docs/migration/01-analise-atual.md).
 
